@@ -1,6 +1,17 @@
+# PS-Cal XML Cal Factor Interpolator
+# By Micah Hurd
+programName = "PS-Cal XML Cal Factor Interpolator"
+version = 1
+
 import re
 import math
 import scipy.interpolate
+import os
+import shutil
+import os.path
+from os import path
+from pathlib import Path
+from distutils.dir_util import copy_tree
 
 from tkinter import *
 from tkinter import filedialog
@@ -9,6 +20,102 @@ from tkinter import messagebox
 from tkinter import ttk
 import time
 
+def readConfigFile(filename, searchTag, sFunc=""):
+    searchTag = searchTag.lower()
+    # print("Search Tag: ",searchTag)
+
+    # Open the file
+    with open(filename, "r") as filestream:
+        # Loop through each line in the file
+
+        for line in filestream:
+
+            if line[0] != "#":
+
+                currentLine = line
+                equalIndex = currentLine.find('=')
+                if equalIndex != -1:
+
+                    tempLength = len(currentLine)
+                    # print("{} {}".format(equalIndex,tempLength))
+                    tempIndex = equalIndex
+                    configTag = currentLine[0:(equalIndex)]
+                    configTag = configTag.lower()
+                    configTag = configTag.strip()
+                    # print(configTag)
+
+                    configField = currentLine[(equalIndex + 1):]
+                    configField = configField.strip()
+                    # print(configField)
+
+                    # print("{} {}".format(configTag,searchTag))
+                    if configTag == searchTag:
+
+                        # Split each line into separated elements based upon comma delimiter
+                        # configField = configField.split(",")
+
+                        # Remove the newline symbol from the list, if present
+                        lineLength = len(configField)
+                        lastElement = lineLength - 1
+                        if configField[lastElement] == "\n":
+                            configField.remove("\n")
+                        # Remove the final comma in the list, if present
+                        lineLength = len(configField)
+                        lastElement = lineLength - 1
+
+                        if configField[lastElement] == ",":
+                            configField = configField[0:lastElement]
+
+                        lineLength = len(configField)
+                        lastElement = lineLength - 1
+
+                        # Apply string manipulation functions, if requested (optional argument)
+                        if sFunc != "":
+                            sFunc = sFunc.lower()
+
+                            if sFunc == "listout":
+                                configField = configField.split(",")
+
+                            if sFunc == "stringout":
+                                configField = configField.strip("\"")
+
+                            if sFunc == "int":
+                                configField = int(configField)
+
+                            if sFunc == "float":
+                                configField = float(configField)
+
+                        filestream.close()
+                        return configField
+
+        filestream.close()
+        return "Searched term could not be found"
+
+def create_log(log_file):
+    f = open(log_file, "w+")
+
+    f.close()
+    return 0
+
+def userInterfaceHeader(program, version, cwd, logFile, msg=""):
+    print(program + ", Version " + str(version))
+    print("Current Working Directory: " + str(cwd))
+    print("Log file located at working directory: " + str(logFile))
+    print("=======================================================================")
+    if msg != "":
+        print(msg)
+        print("_______________________________________________________________________")
+    return 0
+
+def clear():  # Clears the console
+    # for windows
+    from os import system, name
+    if name == 'nt':
+        _ = system('cls')
+
+        # for mac and linux(here, os.name is 'posix')
+    else:
+        _ = system('clear')
 
 def yesNoGUI(questionStr, windowName=""):
     root = Tk()
@@ -165,9 +272,6 @@ def insertCalFactor(index,newCFBlock):
         xmlDataNew.insert(index, data)
 
 
-
-
-
 def editCFblock(cfBlockList,frequency,calFactor,uncertainty,dB):
 
     newCFBlock = cfBlockList.copy()
@@ -277,8 +381,97 @@ def editCFblock(cfBlockList,frequency,calFactor,uncertainty,dB):
     return newCFBlock
 
 # Start Program =================================================================
-filename = "test2.XML"
-xmlData = readXMLFile(filename)
+# Set initial program variables --------------------
+logFile = "interplog.txt"
+if os.path.isfile(logFile):
+    # print ("Log File Exists")
+    logFile = logFile
+else:
+    create_log(logFile)
+
+cwd = os.getcwd() + "\\"
+clear()
+userInterfaceHeader(programName, version, cwd, logFile)
+print("__________  _________         _________         __ ")
+print("\______   \/   _____/         \_   ___ \_____  |  |")
+print(" |     ___/\_____  \   ______ /    \  \/\__  \ |  |")
+print(" |    |    /        \ /_____/ \     \____/ __ \|  |__")
+print(" |____|   /_______  /          \______  (____  /____/")
+print("                  \/                  \/     \/      ")
+print(" ___        __                              __          __        ")
+print("|   | _____/  |_  _________________   ____ |  | _____ _/  |_  ___________ ")
+print("|   |/    \   __\/ __ \_  __ \____ \ /  _ \|  | \__  \\   __\/  _ \_  __ \\")
+print("|   |   |  \  | \  ___/|  | \/  |_> >  <_> )  |__/ __ \|  | (  <_> )  | \/")
+print("|___|___|  /__|  \___  >__|  |   __/ \____/|____(____  /__|  \____/|__|")
+print("         \/          \/      |__|                    \/                   ")
+print("=======================================================================")
+
+
+# Pull in settings from the config file ------------
+configFile = "interpolator.cfg"
+
+debug = readConfigFile(configFile, "debug", "int")
+PS_CalResultsFolder = readConfigFile(configFile, "PS_CalResultsFolder")
+archivePath = readConfigFile(configFile, "archivePath")
+
+# Set debug flag
+if debug == 1:
+    debugBool = True
+else:
+    debugBool = False
+
+# Load XML file for interpolation ---------------------------------------------
+if debugBool == True:
+    xmlFile = "test2.XML"
+    xmlFilePath = cwd + xmlFile
+else:
+    print("Use the file dialogue window to select the XML file for interpolation...")
+    extensionType = "*.XML"
+    xmlFilePath = getFilePath(extensionType,initialDir=PS_CalResultsFolder,extensionDescription="PSCAL XML")
+
+    # Split out the xmlFilePath to obtain the xmlFile name itself
+    tempList = xmlFilePath.split("/")
+    xmlFile = tempList[-1]
+
+
+
+# Create backup copy of existing XML file
+tempBool = path.exists(archivePath)
+if tempBool == True:
+    tempBool = tempBool
+else:
+    os.mkdir(archivePath)
+
+
+# Check if the file has already been backed up; if yes then create a unique name that will not overwrite the existing
+archiveFilePath = archivePath + xmlFile
+tempBool = path.exists(archiveFilePath)
+tempCounter = 1
+while tempBool == True:
+
+    archiveFilePath = archivePath + xmlFile
+
+    filename = Path(archiveFilePath)
+    filename_wo_ext = filename.with_suffix('')
+    archiveFilePath = str(filename_wo_ext)
+    archiveFilePath+=" - Copy(" + str(tempCounter) +")"
+
+    filename = Path(archiveFilePath)
+    filename_replace_ext = filename.with_suffix('.xml')
+    archiveFilePath = filename_replace_ext
+
+    tempBool = path.exists(archiveFilePath)
+    tempCounter+=1
+
+# Backup of the original file
+dest = shutil.copyfile(xmlFilePath, archiveFilePath)
+
+
+
+
+
+# input("Press Enter To Continue...")
+xmlData = readXMLFile(xmlFilePath)
 
 
 rhoFreqList = []
@@ -300,9 +493,7 @@ for index, line in enumerate(xmlData):
     if ("CalFactor diffgr" in line):
         lineList = line.split(" ")
         cFreq = xmlData[index + 1]
-        print("cfFreq: {}".format(cFreq))
         cFreq = re.sub("[^0-9.]", "", cFreq)
-        print("cfFreq: {}".format(cFreq))
         cFreq = float(cFreq)
         cfFreqList.append(cFreq)
 
@@ -321,8 +512,7 @@ for index, line in enumerate(xmlData):
         db = float(db)
         dbList.append(db)
 
-print(rhoFreqList)
-print(dbList)
+
 # Create new lists for each fields requiring interp which are equal length to the rhoFreq list
 cfFreqListNew = []
 cfListNew = []
@@ -510,10 +700,19 @@ for index, line in enumerate(xmlDataNew):
 
 
 # Write the XML data to a file
-with open('test0001.xml', 'w') as filehandle:
+with open(xmlFilePath, 'w') as filehandle:
     for listItem in xmlDataNew:
         # print(listItem)
         filehandle.write(listItem)
 
 
-
+print("")
+print("* * INTERPOLATION COMPLETED * *")
+print("")
+print("Output file saved at: {}".format(xmlFilePath))
+print("")
+print("- - Open XML File in PS-Cal to verify and save as PDF - -")
+print("")
+print("This program will close automatically in 5 seconds...")
+time.sleep(5)
+sys.exit()
