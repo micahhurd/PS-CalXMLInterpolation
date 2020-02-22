@@ -1,7 +1,7 @@
 # PS-Cal XML Cal Factor Interpolator
 # By Micah Hurd
 programName = "PS-Cal XML Cal Factor Interpolator"
-version = 1
+version = 1.1
 
 import re
 import math
@@ -413,6 +413,8 @@ configFile = "interpolator.cfg"
 debug = readConfigFile(configFile, "debug", "int")
 PS_CalResultsFolder = readConfigFile(configFile, "PS_CalResultsFolder")
 archivePath = readConfigFile(configFile, "archivePath")
+standardsDataFolder = readConfigFile(configFile, "standardsDataFolder")
+interpReferenceMethod = readConfigFile(configFile, "interpReferenceMethod", "int")
 
 # Set debug flag
 if debug == 1:
@@ -422,7 +424,7 @@ else:
 
 # Load XML file for interpolation ---------------------------------------------
 if debugBool == True:
-    xmlFile = "test2.XML"
+    xmlFile = "test3.XML"
     xmlFilePath = cwd + xmlFile
 else:
     print("Use the file dialogue window to select the XML file for interpolation...")
@@ -433,6 +435,77 @@ else:
     tempList = xmlFilePath.split("/")
     xmlFile = tempList[-1]
 
+# Read-in the XML file calibration data to a list
+xmlData = readXMLFile(xmlFilePath)
+
+# Setup to allow for interpolation to occur via the alternate reference method (using the Standard's data as the ref)
+# The alternate method was introduced later, so the code below only massages the xmlFile data into a state where
+# it can be interpolated by the normal method. Thereafter the normal method is used.
+if interpReferenceMethod == 2:
+    if debugBool == True:
+        standardDataFile = "3538.XML"
+        xmlFilePath = cwd + xmlFile
+    else:
+        print("Use the file dialogue window to select the XML data file of the standard used for the sensor cal...")
+        extensionType = "*.XML"
+        standardDataFile = getFilePath(extensionType, initialDir=PS_CalResultsFolder, extensionDescription="PSCAL XML")
+
+    stdXMLData = readXMLFile(standardDataFile)
+
+    # Pull the frequency of all available cal points from the standard data
+    stdFreqList = []
+    for index, line in enumerate(stdXMLData):
+
+        if ("Data diffgr:id" in line):
+            rFreq = stdXMLData[index + 1]
+            rFreq = re.sub("[^0-9.]", "", rFreq)
+            rFreq = float(rFreq)
+            stdFreqList.append(rFreq)
+
+    # print(stdFreqList)
+    # input("Press Enter To Continue...")
+
+    # Build a list of CF frequencies present in the XML calibration data
+    cfFreqList = []
+    for index, line in enumerate(xmlData):
+
+        if ("CalFactor diffgr" in line):
+            lineList = line.split(" ")
+            cFreq = xmlData[index + 1]
+            cFreq = re.sub("[^0-9.]", "", cFreq)
+            cFreq = float(cFreq)
+            cfFreqList.append(cFreq)
+
+    # Compare the cfFreqList to the freqs contained in the standard's data to list which require interpolation
+    requiredInterpList = []
+    for index, i in enumerate(cfFreqList):
+
+        # Check if the cf Freq is in the standard data list; if not then set required interp to 1
+        try:
+            tempIndex = stdFreqList.index(i)
+            requiredInterpList.append(0)
+        except:
+            requiredInterpList.append(1)
+
+    # Delete CF blocks from existing XML data for all frequencies that must be interpolated
+    # Missing CF blocks is what triggers the normal method to know that interpolation must occur
+    for index, i in enumerate(requiredInterpList):
+        if i == 1:
+            tempFreq = cfFreqList[index]
+
+            for index2, line in enumerate(xmlData):
+                if ("CalFactor diffgr" in line):
+                    checkFreq = xmlData[index2 + 1]
+                    checkFreq = re.sub("[^0-9.]", "", checkFreq)
+                    checkFreq = float(checkFreq)
+                    if checkFreq == tempFreq:
+                        del xmlData[index2]
+                        tempBool = False
+                        while tempBool == False:
+                            if ("CalFactor diffgr" in xmlData[index2]):
+                                tempBool = True
+                            else:
+                                del xmlData[index2]
 
 
 # Create backup copy of existing XML file
@@ -466,14 +539,6 @@ while tempBool == True:
 # Backup of the original file
 dest = shutil.copyfile(xmlFilePath, archiveFilePath)
 
-
-
-
-
-# input("Press Enter To Continue...")
-xmlData = readXMLFile(xmlFilePath)
-
-
 rhoFreqList = []
 cfFreqList = []
 cfList = []
@@ -499,6 +564,7 @@ for index, line in enumerate(xmlData):
 
         cf = xmlData[index + 2]
         cf = re.sub("[^0-9.]", "", cf)
+        # print("cf: {}".format(cf))
         cf = float(cf)
         cfList.append(cf)
 
@@ -511,6 +577,7 @@ for index, line in enumerate(xmlData):
         db = re.sub("[^0-9.-]", "", db)
         db = float(db)
         dbList.append(db)
+
 
 
 # Create new lists for each fields requiring interp which are equal length to the rhoFreq list
@@ -548,10 +615,6 @@ for index, freq in enumerate(rhoFreqList):
         # Tracks which points require interp (1 means required, 0 means not required)
         requiredInterpList.append(1)
 
-
-# print(cfFreqListNew)
-# print(cfListNew)
-# print(uncListNew)
 
 xVals = []
 yValsCF = []
@@ -596,28 +659,12 @@ for index, line in enumerate(xmlData):
                 tempBool = True
 
 cfBlockLength = len(cfBlockList)
-# print(cfBlockList)
-
-# print(cfFreqListNew)
-# print(cfListNew)
-# print(uncListNew)
-# print(requiredInterpList)
-#
-# print(len(cfFreqListNew))
-# print(len(cfListNew))
-# print(len(uncListNew))
-# print(len(requiredInterpList))
-
-# print(cfBlockList)
-# print(newCFblock)
 
 
 
 # Determine where an interpolated CF block needs to be entered into the existing data
 xmlDataNew = xmlData.copy()
 for index, element in enumerate(requiredInterpList):
-
-
 
     if element == 1:
         freqToAdd = cfFreqListNew[index]
@@ -711,7 +758,7 @@ print("* * INTERPOLATION COMPLETED * *")
 print("")
 print("Output file saved at: {}".format(xmlFilePath))
 print("")
-print("- - Open XML File in PS-Cal to verify and save as PDF - -")
+print("- - Open the XML file in PS-Cal to verify and save as PDF - -")
 print("")
 print("This program will close automatically in 5 seconds...")
 time.sleep(5)
